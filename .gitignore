@@ -1,0 +1,8 @@
+node_modules/
+dist/
+/dist
+/src-tauri/target
+/src-tauri/Cargo.lock
+.env
+.vscode/
+.DS_Store

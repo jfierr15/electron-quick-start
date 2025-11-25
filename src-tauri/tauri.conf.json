@@ -1,0 +1,12 @@
+{
+  "package": {
+    "productName": "CRT Multi-Perspective",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "identifier": "com.example.crt-multiperspective",
+      "targets": ["msi", "exe"]
+    }
+  }
+}

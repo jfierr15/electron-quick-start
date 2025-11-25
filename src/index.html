@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CRT Multi-Perspective (Desktop)</title>
+    <link rel="stylesheet" href="/style.css">
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>CRT Multi-Perspective (Desktop)</h1>
+        <div class="toolbar">
+          <button id="btnLoad">Choose Files…</button>
+          <button id="btnSync">Start / Re-Sync</button>
+          <button id="btnToggleCRT">Toggle CRT Frame</button>
+          <button id="btnFullscreen">Full Screen</button>
+          <div class="spacer"></div>
+          <span class="hint">Keys: ←/→ cycle • 1-4 pick • ↑/↓ page • G gamepad • M mute others • F fullscreen</span>
+        </div>
+      </header>
+
+      <section class="stage">
+        <div class="mainArea crtOn" id="crt">
+          <div class="bezel">
+            <div class="screen" id="mainScreen">
+              <div id="staticOverlay">
+                <canvas id="staticCanvas"></canvas>
+                <div class="staticText"><span>Press ← / → or use a gamepad to switch films…</span></div>
+              </div>
+              <div class="phosphor"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="filmstrip" id="filmstrip"></div>
+      </section>
+
+      <div id="playbackPool" aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden"></div>
+
+      <p class="hint" style="margin-top:10px">Drop 16:9 videos. Audio follows the selected film; others keep playing silently in the background so when you switch back they're further along.</p>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

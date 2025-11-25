@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CRT Multi-Perspective Prototype (16:9)</title>
+  <style>
+    :root{
+      --bg:#0b0c10; --fg:#e5e7eb; --accent:#7dd3fc; --muted:#94a3b8;
+      --crt-glow: rgba(125,211,252,0.25);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial}
+    a{color:var(--accent)}
+    .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+    header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+    header h1{font-size:20px;margin:0 8px 0 0;letter-spacing:.2px}
+    button,input,select{background:#111827;color:var(--fg);border:1px solid #1f2937;border-radius:10px;padding:9px 12px}
+    button:hover{border-color:#374151}
+    button:active{transform:translateY(1px)}
+    .hint{color:var(--muted);font-size:12px}
+
+    .stage{position:relative;display:grid;grid-template-columns:1fr;gap:14px}
+    .mainArea{position:relative;aspect-ratio:16/9;background:#000;border-radius:22px;padding:18px;
+      box-shadow:0 0 40px var(--crt-glow),0 0 0 2px #0f172a inset,0 0 80px var(--crt-glow);} 
+    .bezel{position:relative;height:100%;border-radius:16px;background:#0a0a0a;box-shadow:inset 0 0 16px #000, inset 0 0 40px rgba(0,0,0,.8);padding:10px}
+    .screen{position:relative;height:100%;border-radius:12px;overflow:hidden;background:#111}
+
+    /* CRT effects */
+    .crtOn .screen::after{content:"";position:absolute;inset:0;pointer-events:none;
+      background:repeating-linear-gradient(to bottom, rgba(255,255,255,.06), rgba(255,255,255,.06) 1px, rgba(0,0,0,0) 2px, rgba(0,0,0,0) 4px),
+                 radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,.35) 90%);
+      mix-blend-mode:overlay;
+    }
+    .crtOn video{filter:contrast(1.15) saturate(1.15) brightness(1.05);} 
+    .phosphor{position:absolute;inset:0;pointer-events:none;opacity:.25;filter:blur(1px);
+      background:radial-gradient(circle at 50% 15%, rgba(125,211,252,.25), transparent 30%),
+                 radial-gradient(circle at 70% 80%, rgba(147,197,253,.18), transparent 35%)}
+
+    /* Filmstrip */
+    .filmstrip{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+    .thumb{position:relative;aspect-ratio:16/9;background:#0f172a;border-radius:12px;overflow:hidden;border:1px solid #111}
+    .thumb video{width:100%;height:100%;object-fit:cover;opacity:.85}
+    .thumb .label{position:absolute;left:6px;bottom:6px;background:rgba(0,0,0,.55);padding:3px 6px;border-radius:6px;font-size:12px}
+    .thumb.active{outline:2px solid var(--accent);box-shadow:0 0 0 3px rgba(125,211,252,.25)}
+
+    /* Static overlay */
+    #staticOverlay{position:absolute;inset:0;border-radius:12px;overflow:hidden;display:none;background:#000}
+    #staticCanvas{display:block;width:100%;height:100%}
+    .staticText{position:absolute;inset:auto 0 18px;display:flex;justify-content:center}
+    .staticText span{background:rgba(0,0,0,.65);padding:6px 10px;border-radius:8px;font-size:13px;color:#e5e7eb}
+    .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .spacer{flex:1}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>CRT Multi-Perspective Prototype (16:9)</h1>
+    <div class="toolbar">
+      <button id="btnLoad">Choose Files…</button>
+      <button id="btnSync">Start / Re-Sync</button>
+  <button id="btnToggleCRT">Toggle CRT Frame</button>
+  <button id="btnFullscreen">Full Screen</button>
+      <div class="spacer"></div>
+      <span class="hint">Keys: ←/→ cycle • 1-4 pick • ↑/↓ page • G gamepad • M mute others</span>
+    </div>
+  </header>
+
+  <section class="stage">
+    <div class="mainArea crtOn" id="crt">
+      <div class="bezel">
+        <div class="screen" id="mainScreen">
+          <div id="staticOverlay">
+            <canvas id="staticCanvas"></canvas>
+            <div class="staticText"><span>Press ← / → or use a gamepad to switch films…</span></div>
+          </div>
+          <!-- Selected video mounts here -->
+          <div class="phosphor"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="filmstrip" id="filmstrip"></div>
+  </section>
+
+  <!-- Hidden pool keeps all real video elements playing even when not selected -->
+  <div id="playbackPool" aria-hidden="true" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px;overflow:hidden"></div>
+
+  <p class="hint" style="margin-top:10px">Drop 16:9 videos. Audio follows the selected film; others keep playing silently in the background so when you switch back they're further along.</p>
+</div>
+
+<script>
+(() => {
+  const btnLoad = document.getElementById('btnLoad');
+  const btnSync = document.getElementById('btnSync');
+  const btnToggleCRT = document.getElementById('btnToggleCRT');
+  const btnFullscreen = document.getElementById('btnFullscreen');
+  const filmstrip = document.getElementById('filmstrip');
+  const mainScreen = document.getElementById('mainScreen');
+  const crt = document.getElementById('crt');
+  const pool = document.getElementById('playbackPool');
+  const staticOverlay = document.getElementById('staticOverlay');
+  const staticCanvas = document.getElementById('staticCanvas');
+
+  let videos = [], urls = [], pageStart = 0, selected = -1, firstInteraction = false;
+  let gamepadEnabled = false; // toggle with 'G'
+  let gpPrev = {};            // gamepad edge detection state
+  let noiseRAF = null;
+
+  function makeVideo(src, label){
+    const v = document.createElement('video');
+    v.src = src;
+    v.loop = true;
+    v.preload = 'auto';
+    v.playsInline = true;
+    v.muted = true;
+    v.controls = false;
+    v.style.width = '100%';
+    v.style.height = '100%';
+    v.style.objectFit = 'cover';
+    v.dataset.label = label || '';
+    return v;
+  }
+
+  function renderFilmstrip(){
+    filmstrip.innerHTML = '';
+    if(videos.length === 0) return;
+    const count = Math.min(4, videos.length);
+    for(let i=0;i<count;i++){
+      const idx = (pageStart + i) % videos.length;
+      const cell = document.createElement('div');
+      cell.className = 'thumb' + (idx===selected? ' active':'');
+      const clone = videos[idx].cloneNode();
+      clone.muted = true;
+      clone.playsInline = true;
+      clone.loop = true;
+      clone.play().catch(()=>{});
+      cell.appendChild(clone);
+      const lbl = document.createElement('div');
+      lbl.className = 'label';
+      lbl.textContent = (videos[idx].dataset.label || `Film ${idx+1}`) + (idx===selected? ' • LIVE':'' );
+      cell.appendChild(lbl);
+      cell.addEventListener('click',()=>selectIndex(idx));
+      filmstrip.appendChild(cell);
+    }
+  }
+
+  function mountSelected(){
+    if(selected < 0 || !videos[selected]) return;
+    // Move any existing main videos back to pool (without pausing)
+    mainScreen.querySelectorAll('video').forEach(n=>{ n.muted = true; pool.appendChild(n); });
+    // Bring the selected video to the main screen
+    const v = videos[selected];
+    if(v.parentElement !== mainScreen) mainScreen.insertBefore(v, mainScreen.firstChild);
+    v.muted = false; v.volume = 1.0;
+    v.play().catch(()=>{});
+    // Ensure others remain muted
+    videos.forEach((x,i)=>{ x.muted = (i!==selected); });
+    renderFilmstrip();
+  }
+
+  function selectIndex(idx){
+    if(videos.length===0) return;
+    if(idx<0) idx = videos.length-1;
+    if(idx>=videos.length) idx = 0;
+    selected = idx;
+    hideStatic();
+    mountSelected();
+  }
+
+  function rotate(dir){ selectIndex(selected + dir); }
+
+  function page(dir){
+    if(videos.length<=4) return;
+    pageStart = (pageStart + (dir*4) + videos.length) % videos.length;
+    renderFilmstrip();
+  }
+
+  function startAll(){
+    // Start all videos and keep them playing in the hidden pool
+    videos.forEach(v=>{
+      try{ v.currentTime = 0; }catch(_){ }
+      if(v.parentElement !== pool) pool.appendChild(v);
+      v.muted = true; // default muted; main will unmute
+      v.play().catch(()=>{});
+    });
+    if(selected<0) selected = 0;
+    mountSelected();
+  }
+
+  function hideStatic(){
+    if(!firstInteraction){
+      staticOverlay.style.display='none';
+      if(noiseRAF) cancelAnimationFrame(noiseRAF);
+      firstInteraction = true;
+    }
+  }
+
+  // Fullscreen support for the main screen
+  function isMainScreenFullscreen(){
+    return document.fullscreenElement === mainScreen || document.fullscreenElement === mainScreen.parentElement;
+  }
+
+  function toggleFullScreen(){
+    if(document.fullscreenElement){
+      document.exitFullscreen().catch(()=>{});
+    } else {
+      // Prefer the mainScreen element; some browsers may style the parent differently
+      (mainScreen.requestFullscreen ? mainScreen : mainScreen.parentElement).requestFullscreen().catch(()=>{});
+    }
+  }
+
+  // Update the button label when fullscreen state changes
+  if(btnFullscreen){
+    btnFullscreen.addEventListener('click', ()=>{ toggleFullScreen(); });
+    document.addEventListener('fullscreenchange', ()=>{
+      if(document.fullscreenElement) btnFullscreen.textContent = 'Exit Full Screen';
+      else btnFullscreen.textContent = 'Full Screen';
+    });
+    // Allow 'F' key to toggle fullscreen globally
+    window.addEventListener('keydown', e=>{
+      if(e.key === 'f' || e.key === 'F'){
+        e.preventDefault();
+        toggleFullScreen();
+        hideStatic();
+      }
+    });
+  }
+
+  btnLoad.addEventListener('click', ()=>{
+    const input=document.createElement('input');
+    input.type='file'; input.multiple=true; input.accept='video/*';
+    input.onchange=e=>{
+      cleanup();
+      const files=[...e.target.files].filter(f=>f.type && f.type.startsWith('video/'));
+      if(!files.length) return;
+      files.forEach(f=>{
+        const url=URL.createObjectURL(f); urls.push(url);
+        const v = makeVideo(url, f.name.replace(/\.[^/.]+$/, ''));
+        // Attach to pool immediately so playback is not throttled due to detachment
+        pool.appendChild(v);
+        videos.push(v);
+      });
+      pageStart=0; selected=-1; firstInteraction=false;
+      staticOverlay.style.display='block';
+      drawNoise();
+      renderFilmstrip();
+    };
+    // Clicking the input should open the file dialog
+    input.click();
+  });
+
+  btnSync.addEventListener('click', ()=>{ startAll(); hideStatic(); });
+  btnToggleCRT.addEventListener('click', ()=> crt.classList.toggle('crtOn'));
+
+  window.addEventListener('keydown', e=>{
+    if(videos.length===0) return;
+    const key = e.key;
+    if(['ArrowRight','ArrowLeft','ArrowUp','ArrowDown','1','2','3','4','m','M','g','G'].includes(key)) e.preventDefault();
+    if(key==='ArrowRight') rotate(1);
+    if(key==='ArrowLeft')  rotate(-1);
+    if(key==='ArrowUp')    page(-1);
+    if(key==='ArrowDown')  page(1);
+    if(['1','2','3','4'].includes(key)){
+      const idx = (pageStart + (parseInt(key,10)-1)) % videos.length;
+      selectIndex(idx);
+    }
+    if(key==='m' || key==='M'){
+      // Ensure only selected has audio
+      videos.forEach((v,i)=> v.muted = (i!==selected));
+    }
+    if(key==='g' || key==='G') gamepadEnabled = !gamepadEnabled;
+    hideStatic();
+  });
+
+  function drawNoise(){
+    staticOverlay.style.display='block';
+    const ctx = staticCanvas.getContext('2d');
+    const resize=()=>{ staticCanvas.width = staticOverlay.clientWidth; staticCanvas.height = staticOverlay.clientHeight; };
+    resize();
+    const loop=()=>{
+      const w = staticCanvas.width, h = staticCanvas.height;
+      const img = ctx.createImageData(w,h);
+      const data = img.data;
+      for(let i=0;i<data.length;i+=4){
+        const n = Math.random()*255|0;
+        data[i]=data[i+1]=data[i+2]=n; data[i+3]=255;
+      }
+      ctx.putImageData(img,0,0);
+      noiseRAF = requestAnimationFrame(loop);
+    };
+    loop();
+    window.addEventListener('resize', resize);
+  }
+
+  function cleanup(){
+    videos.forEach(v=>{ try{ v.pause(); }catch(_){ } });
+    urls.forEach(u=>URL.revokeObjectURL(u));
+    videos = [];
+    urls = [];
+    mainScreen.querySelectorAll('video').forEach(n=>n.remove());
+    filmstrip.innerHTML = '';
+  }
+
+  // Initial noise overlay
+  drawNoise();
+
+  // --- gamepad support ---
+  function pollGamepad(){
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const gp = pads[0];
+    if(gp && gamepadEnabled){
+      const btn = i => gp.buttons[i] && gp.buttons[i].pressed;
+      const axis0 = gp.axes[0]||0;
+      const left  = btn(14) || axis0 < -0.5;
+      const right = btn(15) || axis0 >  0.5;
+      const up    = btn(12);
+      const down  = btn(13);
+      const a     = btn(0);
+      const edge = (name, state)=>{ const p = gpPrev[name]||false; gpPrev[name]=state; return state && !p; };
+      if(edge('left', left))  rotate(-1);
+      if(edge('right', right)) rotate(1);
+      if(edge('up', up))      page(-1);
+      if(edge('down', down))  page(1);
+      if(edge('a', a))        startAll();
+      if(left||right||up||down||a) hideStatic();
+    }
+    requestAnimationFrame(pollGamepad);
+  }
+  window.addEventListener('gamepadconnected', ()=>{ gamepadEnabled = true; });
+  requestAnimationFrame(pollGamepad);
+
+})();
+</script>
+</body>
+</html>
