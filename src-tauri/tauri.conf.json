@@ -6,7 +6,7 @@
   "tauri": {
     "bundle": {
       "identifier": "com.example.crt-multiperspective",
-      "targets": ["msi", "exe"]
+      "targets": ["nsis"]
     }
   }
 }
