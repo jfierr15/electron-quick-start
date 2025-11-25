@@ -1,4 +1,36 @@
-import { open } from '@tauri-apps/api/dialog'
+// Use Tauri native dialog when available; otherwise fall back to a browser file input.
+async function getOpenDialog() {
+  // Attempt to dynamically import the Tauri API at runtime.
+  try {
+    // dynamic import prevents static bundlers from always resolving this dependency
+    const mod = await import('@tauri-apps/api/dialog');
+    return mod.open;
+  } catch (e) {
+    // Fallback: return a function that opens a hidden <input type="file"> and resolves with File objects
+    return (opts = {}) => new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = !!opts.multiple;
+      // Try to derive accept from filters if provided
+      if (opts.filters && opts.filters.length && opts.filters[0].extensions) {
+        input.accept = opts.filters[0].extensions.map(ext => '.' + ext).join(',');
+      } else if (opts.accept) {
+        input.accept = opts.accept;
+      } else {
+        input.accept = 'video/*';
+      }
+      input.style.display = 'none';
+      input.onchange = e => {
+        const files = Array.from(e.target.files || []);
+        // Resolve with the File objects to match browser behavior
+        resolve(files);
+        input.remove();
+      };
+      document.body.appendChild(input);
+      input.click();
+    });
+  }
+}
 
 const btnLoad = document.getElementById('btnLoad')
 const btnSync = document.getElementById('btnSync')
@@ -111,25 +143,37 @@ function hideStatic(){
 }
 
 btnLoad.addEventListener('click', async ()=>{
-  // Use Tauri's native open dialog
-  const paths = await open({ multiple: true, filters: [{ name: 'Videos', extensions: ['mp4','mov','webm','mkv'] }], directory: false })
-  if(!paths) return
-  // paths can be string or array
-  const arr = Array.isArray(paths) ? paths : [paths]
-  cleanup()
-  arr.forEach(p=>{
-    const url = toFileUrl(p)
-    urls.push(url)
-    const v = makeVideo(url, p.split(/[\\/]/).pop().replace(/\.[^/.]+$/, ''))
-    // Attach to pool so playback isn't throttled
-    pool.appendChild(v)
-    videos.push(v)
-  })
-  pageStart = 0; selected = -1; firstInteraction = false
-  staticOverlay.style.display = 'block'
-  drawNoise()
-  renderFilmstrip()
-})
+  const openFn = await getOpenDialog();
+  const result = await openFn({ multiple: true, filters: [{ name: 'Videos', extensions: ['mp4','mov','webm','mkv'] }], directory: false });
+  if(!result) return;
+  // Normalize to an array
+  const arr = Array.isArray(result) ? result : [result];
+  cleanup();
+  arr.forEach(item => {
+    let url, label;
+    if (typeof item === 'string') {
+      // Tauri returns filesystem paths
+      url = toFileUrl(item);
+      label = item.split(/[\\/]/).pop().replace(/\.[^/.]+$/, '');
+    } else if (item instanceof File) {
+      // Browser fallback returns File objects — create an object URL
+      url = URL.createObjectURL(item);
+      label = item.name.replace(/\.[^/.]+$/, '');
+    } else {
+      // Unknown type — try to stringify
+      url = String(item);
+      label = url.split('/').pop();
+    }
+    urls.push(url);
+    const v = makeVideo(url, label);
+    pool.appendChild(v);
+    videos.push(v);
+  });
+  pageStart = 0; selected = -1; firstInteraction = false;
+  staticOverlay.style.display = 'block';
+  drawNoise();
+  renderFilmstrip();
+});
 
 btnSync.addEventListener('click', ()=>{ startAll(); hideStatic() })
 btnToggleCRT.addEventListener('click', ()=> crt.classList.toggle('crtOn'))
